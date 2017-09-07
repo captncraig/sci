@@ -12,37 +12,38 @@ import (
 type ResourceType byte
 
 const (
-	View ResourceType = iota
-	Picture
-	Script
-	Text
-	Sound
-	Vocab
-	Font
-	Cursor
-	Patch
+	TView ResourceType = iota
+	TPicture
+	TScript
+	TText
+	TSound
+	TVocab
+	TFont
+	TPatch
+	TCursor
 )
 
 func (rt ResourceType) String() string {
 	switch rt {
-	case View:
+	case TView:
 		return "view"
-	case Picture:
+	case TPicture:
 		return "picture"
-	case Script:
+	case TScript:
 		return "script"
-	case Text:
+	case TText:
 		return "text"
-	case Sound:
+	case TSound:
 		return "sound"
-	case Vocab:
+	case TVocab:
 		return "vocab"
-	case Font:
+	case TFont:
 		return "font"
-	case Cursor:
-		return "cursor"
-	case Patch:
+	case TPatch:
 		return "patch"
+	case TCursor:
+		return "cursor"
+
 	}
 	return "?"
 }
@@ -60,8 +61,14 @@ type ResourceHeader struct {
 	Data             []byte
 }
 
+type Resources struct {
+	AllHeaders []*ResourceHeader
+	Cursors    map[uint16]*Cursor
+	Views      map[uint16]View
+}
+
 func (r *ResourceHeader) String() string {
-	return fmt.Sprintf("%s.%03d, resource.%03d @ $%08x", r.Type, r.ID, r.FileNumber, r.Offset)
+	return fmt.Sprintf("%s.%03d, (%d bytes) @ resource.%03d $%08x", r.Type, r.ID, len(r.Data), r.FileNumber, r.Offset)
 }
 
 type CompressionMethod uint16
@@ -84,16 +91,13 @@ func (cm CompressionMethod) String() string {
 	return "?"
 }
 
-//The SCI0 map file format is pretty simple: It consists of 6-byte entries, terminated by the sequence 0xffff ffff ffff.
-// The first 2 bytes, interpreted as little endian 16 bit integer, encode resource type (high 5 bits) and number (low 11 bits).
-//The next 4 bytes are a 32 bit LE integer that contains the resource file number in the high 6 bits,
-//and the absolute offset within the file in the low 26 bits.
-//SCI0 performs a linear search to find the resource; however, multiple entries may match the search, since resources may be present
-//more than once (the inverse mapping is not injective).
-
 // ReadMap will parse the resource map and return a list of resource pointers. If a non-nil loader is given,
 // it will also read the associated data, decompress it, and store it in the header.
-func ReadMap(dat []byte, loader sci.Loader) ([]*ResourceHeader, error) {
+func ReadMap(dat []byte, loader sci.Loader) (*Resources, error) {
+	resources := &Resources{
+		Cursors: map[uint16]*Cursor{},
+		Views:   map[uint16]View{},
+	}
 	// make sure it ends with 0xff * 6 for SCI0
 	if len(dat)%6 != 0 || len(dat) == 0 {
 		return nil, fmt.Errorf("resource map should be a multiple of 6 bytes long")
@@ -102,27 +106,46 @@ func ReadMap(dat []byte, loader sci.Loader) ([]*ResourceHeader, error) {
 		return nil, fmt.Errorf("resource map should end with 0xffff ffff ffff")
 	}
 	dat = dat[:len(dat)-6]
-	rs := make([]*ResourceHeader, 0, len(dat)/6)
+	resources.AllHeaders = make([]*ResourceHeader, 0, len(dat)/6)
 	seenKeys := map[uint16]bool{}
 	for i := 0; i < len(dat)-5; i += 6 {
-		key := uint16(dat[i]) | uint16(dat[i+1])<<8
+		key := read16(dat, i)
 		if seenKeys[key] {
 			continue
 		}
 		seenKeys[key] = true
 		rec := &ResourceHeader{
-			Type:       ResourceType(dat[i+1] >> 3),
-			ID:         read16(dat, i) & 0x07ff,
+			Type:       ResourceType(key >> 11),
+			ID:         key & 0x07ff,
 			FileNumber: dat[i+5] >> 2,
 			Offset:     read32(dat, i+2) & 0x03ffffff,
 		}
-		rs = append(rs, rec)
+		resources.AllHeaders = append(resources.AllHeaders, rec)
 		if loader != nil {
 			rec.Load(loader)
+			if rec.LoadError == "" {
+				switch rec.Type {
+				case TView:
+					if rec.ID != 0 {
+						break
+					}
+					fmt.Println(rec)
+					if v, err := ParseView(rec.Data); err != nil {
+						rec.LoadError = err.Error()
+					} else {
+						resources.Views[rec.ID] = v
+					}
+				case TCursor:
+					if c, err := ParseCursor(rec.Data); err != nil {
+						rec.LoadError = err.Error()
+					} else {
+						resources.Cursors[rec.ID] = c
+					}
+				}
+			}
 		}
-
 	}
-	return rs, nil
+	return resources, nil
 }
 
 func read16(dat []byte, i int) uint16 {
@@ -153,6 +176,7 @@ func (r *ResourceHeader) Load(l sci.Loader) {
 		r.LoadError = fmt.Sprintf("ID does not match resource data at offset 0x%x", r.Offset)
 		return
 	}
+	// get decompressed data
 	r.CompressedSize = read16(dat, 2)
 	r.CompressedSize -= 4 // decompressed size and method should not count here
 	r.DecompressedSize = read16(dat, 4)
@@ -174,7 +198,6 @@ func (r *ResourceHeader) Load(l sci.Loader) {
 			return
 		}
 	case Huffman:
-		fmt.Println(r)
 		dat = huffmanDecode(dat, r.DecompressedSize)
 	default:
 		r.LoadError = fmt.Sprintf("Unimplemented decompression: %s", r.Method)

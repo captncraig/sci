@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"log"
 
 	"github.com/captncraig/sci"
@@ -9,6 +10,7 @@ import (
 )
 
 var dir = flag.String("d", "games/sci0/SierraCard1988", "directory containing resource files")
+var print = flag.Bool("p", false, "print a bunch of stuff")
 
 func main() {
 	flag.Parse()
@@ -17,5 +19,14 @@ func main() {
 	if err != nil {
 		log.Fatalf("Couldn't read resource map: %s", err)
 	}
-	resources.ReadMap(rMap, loader)
+	rez, err := resources.ReadMap(rMap, loader)
+	if err != nil {
+		log.Fatal(err)
+	}
+	if !*print {
+		return
+	}
+	for _, r := range rez.AllHeaders {
+		fmt.Println(r)
+	}
 }

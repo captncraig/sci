@@ -1,7 +1,5 @@
 package resources
 
-import "fmt"
-
 //https://github.com/scummvm/scummvm/blob/master/engines/sci/decompressor.cpp#L108
 //http://sciwiki.sierrahelp.com//index.php?title=SCI_Specifications:_Chapter_2_-_Resource_files#Decompression_algorithm_HUFFMAN
 func huffmanDecode(dat []byte, expectedLength uint16) []byte {
@@ -11,13 +9,8 @@ func huffmanDecode(dat []byte, expectedLength uint16) []byte {
 	dat = dat[2+numNodes*2:]
 	curByte := 0
 	curBit := byte(7)
-	out := make([]byte, 0, expectedLength)
-	n := 0
+
 	getBit := func() byte {
-		n++
-		if curByte >= len(dat) {
-			fmt.Println(len(out), expectedLength, curByte, n)
-		}
 		v := (dat[curByte] >> curBit) & 0x01
 		curBit--
 		if curBit == 0xff {
@@ -55,7 +48,7 @@ func huffmanDecode(dat []byte, expectedLength uint16) []byte {
 		left := int(sibs&0xf0) >> 4
 		return getNextChar(idx + int(left))
 	}
-
+	out := make([]byte, 0, expectedLength)
 	for {
 		c, ok := getNextChar(0)
 		if ok && c == terminator {
